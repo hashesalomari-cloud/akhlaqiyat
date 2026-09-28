@@ -12,12 +12,12 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Unzip and locate project files
+      - name: Unzip and setup project root
         run: |
-          unzip -o akhlaqiyat_flutter_project.zip -d temp_folder
-          PUB_DIR=$(dirname $(find temp_folder -name "pubspec.yaml" | head -n 1))
-          cp -r $PUB_DIR/* .
-          rm -rf temp_folder
+          unzip -o akhlaqiyat_flutter_project.zip -d extracted
+          PROJECT_DIR=$(dirname $(find extracted -name "pubspec.yaml" | head -n 1))
+          rsync -av $PROJECT_DIR/ .
+          rm -rf extracted
 
       - name: Set up Java
         uses: actions/setup-java@v3
