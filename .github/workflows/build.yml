@@ -14,10 +14,11 @@ jobs:
 
       - name: Unzip and setup project root
         run: |
-          unzip -o akhlaqiyat_flutter_project.zip -d extracted
-          PROJECT_DIR=$(dirname $(find extracted -name "pubspec.yaml" | head -n 1))
-          rsync -av $PROJECT_DIR/ .
-          rm -rf extracted
+          unzip -o akhlaqiyat_flutter_project.zip -d temp_folder
+          PUB_DIR=$(dirname $(find temp_folder -name "pubspec.yaml" | head -n 1))
+          shopt -s dotglob
+          cp -rn $PUB_DIR/* .
+          rm -rf temp_folder
 
       - name: Set up Java
         uses: actions/setup-java@v3
@@ -29,6 +30,9 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+
+      - name: Repair Android Project Files
+        run: flutter create . --platforms=android
 
       - name: Get dependencies
         run: flutter pub get
