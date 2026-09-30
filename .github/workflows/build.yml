@@ -48,7 +48,8 @@ jobs:
               '\n    <uses-permission android:name="android.permission.INTERNET"/>'
               '\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>'
               '\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>'
-              '\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>\n'
+              '\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>'
+              '\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n'
           )
           # Anchor on <manifest ...> (always exactly one, always the root element)
           # instead of <application>, so this can never silently miss.
