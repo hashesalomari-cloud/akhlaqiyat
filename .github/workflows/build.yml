@@ -63,6 +63,45 @@ jobs:
           PY
           grep -n "uses-permission\|<manifest\|<application" android/app/src/main/AndroidManifest.xml
 
+          python3 - <<'PY'
+          import re, os
+          # flutter_local_notifications requires "core library desugaring" to be
+          # enabled in the app-level Gradle file, or the release build fails with:
+          # "Dependency ':flutter_local_notifications' requires core library
+          # desugaring to be enabled for :app." This handles both the older
+          # Groovy (build.gradle) and newer Kotlin DSL (build.gradle.kts) templates.
+          kts_path = "android/app/build.gradle.kts"
+          groovy_path = "android/app/build.gradle"
+          is_kts = os.path.exists(kts_path)
+          path = kts_path if is_kts else groovy_path
+          s = open(path, encoding="utf8").read()
+
+          if is_kts:
+              desugar_line = "\n        isCoreLibraryDesugaringEnabled = true"
+              dep_line = '\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n'
+          else:
+              desugar_line = "\n        coreLibraryDesugaringEnabled true"
+              dep_line = "\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'\n"
+
+          if "compileOptions" in s and "compileOptions {" in s:
+              s = s.replace("compileOptions {", "compileOptions {" + desugar_line, 1)
+          else:
+              s2 = re.sub(r'(android\s*\{)', r'\1\n    compileOptions {' + desugar_line + '\n    }\n', s, count=1)
+              assert s2 != s, "FATAL: could not find android {} block"
+              s = s2
+
+          if "dependencies {" in s:
+              idx = s.rfind("dependencies {")
+              insert_at = idx + len("dependencies {")
+              s = s[:insert_at] + dep_line + s[insert_at:]
+          else:
+              s += "\n\ndependencies {" + dep_line + "}\n"
+
+          open(path, "w", encoding="utf8").write(s)
+          print(f"Patched {path} for core library desugaring ({'Kotlin DSL' if is_kts else 'Groovy'})")
+          PY
+          grep -n "desugar\|coreLibraryDesugaring" android/app/build.gradle.kts android/app/build.gradle 2>/dev/null || true
+
       - name: Build release APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
