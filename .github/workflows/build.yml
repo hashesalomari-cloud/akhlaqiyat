@@ -57,6 +57,18 @@ jobs:
           if s2 == s:
               raise SystemExit("FATAL: could not find <manifest> tag to insert permissions into")
           s = re.sub(r'android:label="[^"]*"', 'android:label="أخلاقيات"', s2, count=1)
+          # flutter_tts requires declaring the TTS service intent in <queries>
+          # on Android 11+ (API 30+), or text-to-speech silently finds no engine.
+          queries_block = (
+              '\n    <queries>'
+              '\n        <intent>'
+              '\n            <action android:name="android.intent.action.TTS_SERVICE" />'
+              '\n        </intent>'
+              '\n    </queries>\n'
+          )
+          s3 = s.replace('</manifest>', queries_block + '</manifest>', 1)
+          assert s3 != s, "FATAL: could not find </manifest> closing tag"
+          s = s3
           open(p, "w", encoding="utf8").write(s)
           assert "android.permission.INTERNET" in open(p, encoding="utf8").read()
           print("Permissions inserted successfully. Manifest now contains:")
