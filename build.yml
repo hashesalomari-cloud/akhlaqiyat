@@ -155,7 +155,9 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           flutter pub get
-          flutter build apk --release
+          # R8 shrinking breaks flutter_local_notifications (Gson 'Missing type parameter'),
+          # so build without shrinking; fall back to the plain command if the flag is unknown.
+          flutter build apk --release --no-shrink || flutter build apk --release
 
       - name: Upload APK as artifact
         uses: actions/upload-artifact@v4
