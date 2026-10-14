@@ -1,0 +1,142 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unzip project (if uploaded as zip)
+        run: |
+          if [ -f akhlaqiyat_flutter_project.zip ]; then unzip -q -o akhlaqiyat_flutter_project.zip; fi
+          if [ -d akhlaqiyat_project ]; then echo "PROJECT_DIR=akhlaqiyat_project" >> $GITHUB_ENV; else echo "PROJECT_DIR=." >> $GITHUB_ENV; fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android scaffold and set permissions
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          cp -r lib /tmp/lib_bak
+          cp pubspec.yaml /tmp/pubspec_bak.yaml
+          cp -r assets /tmp/assets_bak
+          flutter create --platforms=android --org com.akhlaqiyat --project-name akhlaqiyat .
+          rm -rf lib test
+          cp -r /tmp/lib_bak lib
+          cp /tmp/pubspec_bak.yaml pubspec.yaml
+          rm -rf assets && cp -r /tmp/assets_bak assets
+          python3 - <<'PY'
+          import re
+          p = "android/app/src/main/AndroidManifest.xml"
+          s = open(p, encoding="utf8").read()
+          perms = (
+              '\n    <uses-permission android:name="android.permission.INTERNET"/>'
+              '\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>'
+              '\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>'
+              '\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>'
+              '\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>'
+              '\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>'
+              '\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>'
+              '\n    <uses-permission android:name="android.permission.VIBRATE"/>'
+              '\n    <uses-permission android:name="android.permission.WAKE_LOCK"/>\n'
+          )
+          # Anchor on <manifest ...> (always exactly one, always the root element)
+          # instead of <application>, so this can never silently miss.
+          s2 = re.sub(r'(<manifest\b[^>]*>)', r'\1' + perms, s, count=1)
+          if s2 == s:
+              raise SystemExit("FATAL: could not find <manifest> tag to insert permissions into")
+          s = re.sub(r'android:label="[^"]*"', 'android:label="أخلاقيات"', s2, count=1)
+          # Receivers required for scheduled notifications (prayer alerts) to
+          # fire at all, and to be restored after a reboot.
+          receivers = (
+              '\n        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />'
+              '\n        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">'
+              '\n            <intent-filter>'
+              '\n                <action android:name="android.intent.action.BOOT_COMPLETED"/>'
+              '\n                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>'
+              '\n                <action android:name="android.intent.action.QUICKBOOT_POWERON" />'
+              '\n                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>'
+              '\n            </intent-filter>'
+              '\n        </receiver>\n    '
+          )
+          s3 = s.replace('</application>', receivers + '</application>', 1)
+          assert s3 != s, "FATAL: could not find </application> closing tag"
+          s = s3
+          open(p, "w", encoding="utf8").write(s)
+          assert "android.permission.INTERNET" in open(p, encoding="utf8").read()
+          print("Permissions inserted successfully. Manifest now contains:")
+          PY
+          grep -n "uses-permission\|<manifest\|<application" android/app/src/main/AndroidManifest.xml
+
+          python3 - <<'PY'
+          import re, os
+          # flutter_local_notifications requires "core library desugaring" to be
+          # enabled in the app-level Gradle file, or the release build fails with:
+          # "Dependency ':flutter_local_notifications' requires core library
+          # desugaring to be enabled for :app." This handles both the older
+          # Groovy (build.gradle) and newer Kotlin DSL (build.gradle.kts) templates.
+          kts_path = "android/app/build.gradle.kts"
+          groovy_path = "android/app/build.gradle"
+          is_kts = os.path.exists(kts_path)
+          path = kts_path if is_kts else groovy_path
+          s = open(path, encoding="utf8").read()
+
+          if is_kts:
+              desugar_line = "\n        isCoreLibraryDesugaringEnabled = true"
+              dep_line = '\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n'
+          else:
+              desugar_line = "\n        coreLibraryDesugaringEnabled true"
+              dep_line = "\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'\n"
+
+          if "compileOptions" in s and "compileOptions {" in s:
+              s = s.replace("compileOptions {", "compileOptions {" + desugar_line, 1)
+          else:
+              s2 = re.sub(r'(android\s*\{)', r'\1\n    compileOptions {' + desugar_line + '\n    }\n', s, count=1)
+              assert s2 != s, "FATAL: could not find android {} block"
+              s = s2
+
+          if "dependencies {" in s:
+              idx = s.rfind("dependencies {")
+              insert_at = idx + len("dependencies {")
+              s = s[:insert_at] + dep_line + s[insert_at:]
+          else:
+              s += "\n\ndependencies {" + dep_line + "}\n"
+
+          open(path, "w", encoding="utf8").write(s)
+          print(f"Patched {path} for core library desugaring ({'Kotlin DSL' if is_kts else 'Groovy'})")
+          PY
+          grep -n "desugar\|coreLibraryDesugaring" android/app/build.gradle.kts android/app/build.gradle 2>/dev/null || true
+
+      - name: Build release APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          flutter pub get
+          flutter build apk --release
+
+      - name: Upload APK as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: akhlaqiyat-apk
+          path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Publish APK as GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: أخلاقيات APK #${{ github.run_number }}
+          files: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-release.apk
