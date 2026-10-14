@@ -53,7 +53,8 @@ jobs:
               '\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>'
               '\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>'
               '\n    <uses-permission android:name="android.permission.VIBRATE"/>'
-              '\n    <uses-permission android:name="android.permission.WAKE_LOCK"/>\n'
+              '\n    <uses-permission android:name="android.permission.WAKE_LOCK"/>'
+              '\n    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY"/>\n'
           )
           # Anchor on <manifest ...> (always exactly one, always the root element)
           # instead of <application>, so this can never silently miss.
@@ -121,6 +122,34 @@ jobs:
           print(f"Patched {path} for core library desugaring ({'Kotlin DSL' if is_kts else 'Groovy'})")
           PY
           grep -n "desugar\|coreLibraryDesugaring" android/app/build.gradle.kts android/app/build.gradle 2>/dev/null || true
+
+          python3 - <<'PY'
+          # Native Android pieces: auto-silent during prayer + home-screen widget,
+          # plus the launcher icon. Package name is read from the generated MainActivity.
+          import glob, os, re, shutil
+          mains = glob.glob("android/app/src/main/**/MainActivity.kt", recursive=True)
+          assert mains, "FATAL: MainActivity.kt not found"
+          kdir = os.path.dirname(mains[0])
+          pkg = re.search(r'^package\s+([\w.]+)', open(mains[0], encoding="utf8").read(), re.M).group(1)
+          for f in ["MainActivity.kt", "SilentReceiver.kt", "AkhlaqWidgetProvider.kt"]:
+              src = open("native/" + f, encoding="utf8").read().replace("__PKG__", pkg)
+              open(os.path.join(kdir, f), "w", encoding="utf8").write(src)
+          shutil.copytree("native/res", "android/app/src/main/res", dirs_exist_ok=True)
+          shutil.copytree("android_res", "android/app/src/main/res", dirs_exist_ok=True)
+          mp = "android/app/src/main/AndroidManifest.xml"
+          m = open(mp, encoding="utf8").read()
+          recv = (
+              '\n        <receiver android:exported="false" android:name="' + pkg + '.SilentReceiver" />'
+              '\n        <receiver android:exported="true" android:name="' + pkg + '.AkhlaqWidgetProvider">'
+              '\n            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter>'
+              '\n            <meta-data android:name="android.appwidget.provider" android:resource="@xml/akhlaq_widget_info"/>'
+              '\n        </receiver>\n    '
+          )
+          m2 = m.replace('</application>', recv + '</application>', 1)
+          assert m2 != m, "FATAL: no </application>"
+          open(mp, "w", encoding="utf8").write(m2)
+          print("Native pieces installed for package", pkg)
+          PY
 
       - name: Build release APK
         working-directory: ${{ env.PROJECT_DIR }}
